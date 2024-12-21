@@ -1,0 +1,272 @@
+import raylib as rl
+from random import randint, choice
+import time
+import random
+
+# Screen dimensions
+screen_width = 635
+screen_height = 600
+
+# Paddle settings
+paddle = rl.Rectangle(screen_width / 2 - 50, screen_height - 20, 45, 10)
+paddle_speed = 500.0
+
+# Ball settings
+ball_position = rl.Vector2(screen_width / 2, screen_height / 2)
+ball_speed = rl.Vector2(160.0, -160.0)
+ball_radius = 5.0
+balls = [{"position": ball_position, "speed": ball_speed}]  # Store as a dictionary
+
+# Brick settings
+rows = 8
+cols = 14
+brick_width = 35
+brick_height = 10
+bricks = []
+
+# Colors for brick rows
+colors = [rl.RED, rl.RED, rl.ORANGE, rl.ORANGE, rl.GREEN, rl.GREEN, rl.YELLOW, rl.YELLOW]
+
+# Game state
+score = 0
+game_over = False
+game_won = False
+game_started = False  # Added to track game start state
+
+# Power-up settings
+power_ups = []
+active_power_ups = []
+power_up_duration = 5.0  # Duration of power-ups in seconds
+
+# Define power-up types
+POWER_UPS = ['SPEED', 'SLOW', 'SHRINK_BALL', 'GROW_BALL', 'SHRINK_PADDLE', 'GROW_PADDLE', 'DUPLICATE']
+
+# Colors for power-ups
+POWER_UP_COLORS = {
+    'SPEED': rl.GREEN,
+    'SLOW': rl.BLUE,
+    'SHRINK_BALL': rl.RED,
+    'GROW_BALL': rl.PURPLE,
+    'SHRINK_PADDLE': rl.ORANGE,
+    'GROW_PADDLE': rl.YELLOW,
+    'DUPLICATE': rl.Color(0, 255, 255, 255)
+}
+
+# Initialize bricks
+def init_bricks():
+    global bricks
+    bricks = []
+    for i in range(rows):
+        for j in range(cols):
+            # Randomly determine if this brick should have a power-up (say, 20% chance)
+            can_drop_power_up = random.random() < 0.2  # 20% chance for a power-up
+            bricks.append({
+                "rect": rl.Rectangle(j * (brick_width + 5) + 40, i * (brick_height + 5) + 40, brick_width, brick_height),
+                "color": colors[i % len(colors)],
+                "can_drop_power_up": can_drop_power_up  # Flag to check if power-up can spawn
+            })
+
+# Drawing function for bricks
+def draw_bricks():
+    for brick in bricks:
+        rl.draw_rectangle_rec(brick["rect"], brick["color"])
+
+# Power-up handling
+def spawn_power_up(brick):
+    power_up_type = choice(POWER_UPS)
+    x = brick["rect"].x + brick_width / 2
+    y = brick["rect"].y + brick_height / 2
+    power_up = {"type": power_up_type, "position": rl.Vector2(x, y), "color": POWER_UP_COLORS[power_up_type], "speed": 200.0}
+    power_ups.append(power_up)
+
+def apply_power_up(power_up):
+    global ball_speed, ball_radius, paddle, balls
+
+    if power_up["type"] == 'SPEED':
+        ball_speed = rl.Vector2(ball_speed.x * 1.5, ball_speed.y * 1.5)
+        active_power_ups.append({"type": 'SPEED', "time": time.time()})
+    elif power_up["type"] == 'SLOW':
+        ball_speed = rl.Vector2(ball_speed.x / 1.5, ball_speed.y / 1.5)
+        active_power_ups.append({"type": 'SLOW', "time": time.time()})
+    elif power_up["type"] == 'SHRINK_BALL':
+        ball_radius = max(ball_radius / 1.5, 4)
+        active_power_ups.append({"type": 'SHRINK_BALL', "time": time.time()})
+    elif power_up["type"] == 'GROW_BALL':
+        ball_radius = min(ball_radius * 1.5, 12)
+        active_power_ups.append({"type": 'GROW_BALL', "time": time.time()})
+    elif power_up["type"] == 'SHRINK_PADDLE':
+        paddle.width = max(paddle.width / 1.5, 40)
+        active_power_ups.append({"type": 'SHRINK_PADDLE', "time": time.time()})
+    elif power_up["type"] == 'GROW_PADDLE':
+        paddle.width = min(paddle.width * 1.5, 200)
+        active_power_ups.append({"type": 'GROW_PADDLE', "time": time.time()})
+    elif power_up["type"] == 'DUPLICATE':
+        # Duplicate the ball
+        new_ball_position = rl.Vector2(ball_position.x, ball_position.y)
+        new_ball_speed = rl.Vector2(ball_speed.x, ball_speed.y)  # Same speed as original ball
+        balls.append({"position": new_ball_position, "speed": new_ball_speed})  # Store as a dictionary
+        active_power_ups.append({"type": 'DUPLICATE', "time": time.time()})
+
+def remove_expired_power_ups():
+    global ball_speed, ball_radius, paddle, active_power_ups
+
+    for power_up in active_power_ups[:]:
+        if time.time() - power_up["time"] > power_up_duration:
+            if power_up["type"] == 'SPEED':
+                ball_speed = rl.Vector2(ball_speed.x / 1.5, ball_speed.y / 1.5)
+            elif power_up["type"] == 'SLOW':
+                ball_speed = rl.Vector2(ball_speed.x * 1.5, ball_speed.y * 1.5)
+            elif power_up["type"] == 'SHRINK_BALL':
+                ball_radius = min(ball_radius * 1.5, 8)
+            elif power_up["type"] == 'GROW_BALL':
+                ball_radius = max(ball_radius / 1.5, 4)
+            elif power_up["type"] == 'SHRINK_PADDLE':
+                paddle.width = min(paddle.width * 1.5, 100)
+            elif power_up["type"] == 'GROW_PADDLE':
+                paddle.width = max(paddle.width / 1.5, 50)
+
+            active_power_ups.remove(power_up)
+
+def draw_power_ups():
+    for power_up in power_ups:
+        rl.draw_circle_v(power_up["position"], 10, power_up["color"])
+
+def update_ball(delta_time):
+    global balls, ball_radius, game_over, game_won, score, bricks
+
+    if not game_over and not game_won:
+        # Update each ball in the balls list (now a dictionary)
+        for ball in balls[:]:
+            # Access position and speed as dictionary keys
+            ball["position"].x += ball["speed"].x * delta_time
+            ball["position"].y += ball["speed"].y * delta_time
+
+            # Handle collisions and other logic
+            if ball["position"].y <= ball_radius:  # Top border collision
+                ball["position"].y = ball_radius  # Keep ball inside
+                ball["speed"].y *= -1  # Bounce ball back
+
+            # Left and Right border collision
+            if ball["position"].x <= ball_radius:  # Left border collision
+                ball["position"].x = ball_radius  # Keep ball inside
+                ball["speed"].x *= -1  # Bounce ball back
+
+            if ball["position"].x >= screen_width - ball_radius:  # Right border collision
+                ball["position"].x = screen_width - ball_radius  # Keep ball inside
+                ball["speed"].x *= -1  # Bounce ball back
+
+            # Paddle collision
+            if rl.check_collision_circle_rec(ball["position"], ball_radius, paddle):
+                ball["speed"].y *= -1
+
+            # Brick collision
+            for brick in bricks[:]:
+                if rl.check_collision_circle_rec(ball["position"], ball_radius, brick["rect"]):
+                    ball["speed"].y *= -1
+                    bricks.remove(brick)
+                    score += 10
+                    if brick["can_drop_power_up"]:
+                        spawn_power_up(brick)
+
+            # Check win condition
+            if not bricks:
+                game_won = True
+
+            # Check game over condition (ball falls below the bottom border)
+            if ball["position"].y >= screen_height:
+                game_over = True
+                ball["speed"] = rl.Vector2(0, 0)  # Stop the ball
+
+# Update falling power-ups
+def update_power_ups(delta_time):
+    global power_ups
+    for power_up in power_ups[:]:
+        power_up["position"].y += power_up["speed"] * delta_time  # Make the power-up fall
+        if rl.check_collision_circle_rec(power_up["position"], 10, paddle):  # Paddle collision
+            apply_power_up(power_up)
+            power_ups.remove(power_up)
+        elif power_up["position"].y > screen_height:  # Remove power-ups that fall off screen
+            power_ups.remove(power_up)
+
+# Draw the main menu
+def draw_menu():
+    rl.draw_text("BREAK OUT", screen_width // 2 - 179, screen_height // 2 - 60, 60, rl.WHITE)
+    rl.draw_text("> PRESS ENTER TO START", screen_width // 2 - 215, screen_height // 2 + 20, 30, rl.LIGHTGRAY)
+
+# End screen drawing
+def draw_end_screen():
+    if game_won:
+        rl.draw_text("YOU WON!", screen_width // 2 - 120, screen_height // 2 - 60, 60, rl.YELLOW)
+    elif game_over:
+        rl.draw_text("GAME OVER", screen_width // 2 - 170, screen_height // 2 - 60, 60, rl.RED)
+
+    rl.draw_text(f"Score: {score}", screen_width // 2 - 55, screen_height // 2 + 20, 30, rl.WHITE)
+    rl.draw_text("> PRESS ENTER TO RETURN", screen_width // 2 - 220, screen_height // 2 + 80, 30, rl.LIGHTGRAY)
+
+game_started = False  # Already defined to track game state
+
+# Add this to the reset_game function to reset the power-ups when the game starts.
+def reset_game():
+    global score, game_over, game_won, game_started, ball_position, ball_speed, balls, power_ups
+    score = 0
+    game_over = False
+    game_won = False
+    game_started = False  # Reset this flag when the game is reset
+    ball_position = rl.Vector2(screen_width / 2, screen_height / 2)
+    ball_speed = rl.Vector2(150.0, -150.0)
+    balls = [{"position": ball_position, "speed": ball_speed}]
+    power_ups = []  # Clear the power-ups
+    init_bricks()
+
+def main():
+    rl.init_window(screen_width, screen_height, "Break Out")
+    rl.set_target_fps(60)
+    init_bricks()
+
+    global game_started
+
+    while not rl.window_should_close():
+        delta_time = rl.get_frame_time()
+
+        if not game_started:
+            # Display the menu
+            if rl.is_key_pressed(rl.KEY_ENTER):
+                game_started = True
+            rl.begin_drawing()
+            rl.clear_background(rl.BLACK)
+            draw_menu()
+            rl.end_drawing()
+        else:
+            # Paddle movement
+            if rl.is_key_down(rl.KEY_LEFT) and paddle.x > 0:
+                paddle.x -= paddle_speed * delta_time
+            if rl.is_key_down(rl.KEY_RIGHT) and paddle.x < screen_width - paddle.width:
+                paddle.x += paddle_speed * delta_time
+
+            # Update ball
+            update_ball(delta_time)
+            update_power_ups(delta_time)  # Update falling power-ups
+            remove_expired_power_ups()
+
+            # Drawing
+            rl.begin_drawing()
+            rl.clear_background(rl.BLACK)
+
+            if game_over or game_won:
+                draw_end_screen()
+                if rl.is_key_pressed(rl.KEY_ENTER):
+                    reset_game()
+            else:
+                rl.draw_rectangle_rec(paddle, rl.BLUE)
+                for ball in balls:
+                    rl.draw_circle_v(ball["position"], ball_radius, rl.WHITE)  # Access position correctly
+                draw_bricks()
+                draw_power_ups()  # Draw power-ups
+                rl.draw_text(f"Score: {score}", 20, screen_height - 40, 20, rl.WHITE)
+
+            rl.end_drawing()
+
+    rl.close_window()
+
+if __name__ == "__main__":
+    main()
